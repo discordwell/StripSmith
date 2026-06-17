@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 from anthropic import Anthropic
 
 from src.utils.logger import get_logger
-from src.utils.config import get_config
+from src.utils.config import get_config, DEFAULT_LLM_MODEL, DEFAULT_LLM_MAX_TOKENS
 
 logger = get_logger("stripsmith.analyzer")
 
@@ -49,16 +49,21 @@ class NarrativeAnalyzer:
         # Call Claude API
         try:
             response = self.client.messages.create(
-                model=self.config.get("analysis.llm_model", "claude-3-5-sonnet-20250514"),
-                max_tokens=4096,
+                model=self.config.get("analysis.llm_model", DEFAULT_LLM_MODEL),
+                max_tokens=self.config.get("analysis.max_output_tokens", DEFAULT_LLM_MAX_TOKENS),
                 messages=[{
                     "role": "user",
                     "content": prompt
                 }]
             )
 
-            # Parse response
-            result_text = response.content[0].text
+            # Parse response. Pull the first text block rather than assuming
+            # content[0] is text — keeps working if a thinking block is ever
+            # returned ahead of the answer.
+            result_text = next(
+                (block.text for block in response.content if block.type == "text"),
+                ""
+            )
             project_spec = self._parse_response(result_text)
 
             logger.info(f"Analysis complete: {len(project_spec['chapters'])} chapters, "

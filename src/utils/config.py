@@ -5,6 +5,20 @@ import yaml
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+# Single source of truth for the default Claude model used by the narrative
+# analyzer and panel breakdown. Keeping it here (rather than as a literal in
+# each module) ensures the in-code fallback can't drift out of sync with
+# config/config.yaml. The previous value, "claude-3-opus-20240229", was retired
+# on 2026-01-05 and now returns 404; "claude-opus-4-8" is its supported
+# replacement per Anthropic's migration guide.
+DEFAULT_LLM_MODEL = "claude-opus-4-8"
+
+# Default cap on Claude's output tokens. The pipeline asks for structured JSON
+# describing many chapters/characters/panels, so we give it generous headroom to
+# avoid truncated (unparseable) responses. Stays well under the SDK's
+# non-streaming HTTP timeout threshold.
+DEFAULT_LLM_MAX_TOKENS = 8192
+
 
 class Config:
     """Configuration manager for Stripsmith."""

@@ -263,6 +263,23 @@ Better:
 
 ---
 
+## Testing
+
+Unit tests live in `tests/` and run with [pytest](https://pytest.org):
+
+```bash
+pip install -r requirements.txt   # includes pytest
+pytest                            # run the full suite
+pytest tests/test_normalizer.py   # run a single module
+```
+
+The suite covers story normalization (including smart-quote handling),
+configuration loading, character templating, page-layout geometry, the in-memory
+job/session manager, and the web pipeline's API-key wiring. It runs fully offline
+— no API keys or network access required.
+
+---
+
 ## Development Roadmap
 
 ### MVP (Current)
@@ -304,7 +321,7 @@ MIT License - See LICENSE file for details
 ## Credits
 
 - **DALL-E 3** by OpenAI - Image generation
-- **Claude 3.5 Sonnet** by Anthropic - Story analysis
+- **Claude (Opus 4.8)** by Anthropic - Story analysis (configurable in `config/config.yaml`)
 - **Pillow** - Image processing
 - **ReportLab** - PDF generation
 

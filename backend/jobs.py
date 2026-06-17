@@ -1,9 +1,18 @@
 """Job and session management for StripSmith."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Dict, Any, Optional
 import threading
+
+
+def _utcnow() -> datetime:
+    """Timezone-aware UTC now.
+
+    Replaces datetime.utcnow(), which returns a naive datetime and is
+    deprecated (slated for removal) as of Python 3.12.
+    """
+    return datetime.now(timezone.utc)
 
 
 class JobStatus(str, Enum):
@@ -49,8 +58,8 @@ class JobManager:
         with self._lock:
             session = {
                 "session_id": session_id,
-                "created_at": datetime.utcnow(),
-                "expires_at": datetime.utcnow() + timedelta(hours=2),
+                "created_at": _utcnow(),
+                "expires_at": _utcnow() + timedelta(hours=2),
                 "openai_key": openai_key,
                 "anthropic_key": anthropic_key,
             }
@@ -74,7 +83,7 @@ class JobManager:
                 return None
 
             # Check expiration
-            if datetime.utcnow() > session["expires_at"]:
+            if _utcnow() > session["expires_at"]:
                 del self._sessions[session_id]
                 return None
 
@@ -132,8 +141,8 @@ class JobManager:
                 "status": JobStatus.PENDING,
                 "progress": 0,
                 "stage": "Initializing...",
-                "created_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow(),
+                "created_at": _utcnow(),
+                "updated_at": _utcnow(),
                 "result": None,
                 "error": None,
             }
@@ -179,7 +188,7 @@ class JobManager:
                 return
 
             job["status"] = status
-            job["updated_at"] = datetime.utcnow()
+            job["updated_at"] = _utcnow()
 
             if progress is not None:
                 job["progress"] = progress
@@ -212,7 +221,7 @@ class JobManager:
             max_age_hours: Maximum age in hours
         """
         with self._lock:
-            cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+            cutoff = _utcnow() - timedelta(hours=max_age_hours)
             jobs_to_delete = [
                 job_id
                 for job_id, job in self._jobs.items()
@@ -222,15 +231,22 @@ class JobManager:
             for job_id in jobs_to_delete:
                 del self._jobs[job_id]
 
-            # Also cleanup expired sessions
+            # Also cleanup expired sessions. Delete inline rather than calling
+            # self.delete_session(), which would re-acquire self._lock — a
+            # threading.Lock is NOT reentrant, so that re-entry would deadlock
+            # the cleanup task (and every other job/session operation with it).
+            now = _utcnow()
             sessions_to_delete = [
                 session_id
                 for session_id, session in self._sessions.items()
-                if session["expires_at"] < datetime.utcnow()
+                if session["expires_at"] < now
             ]
 
             for session_id in sessions_to_delete:
-                self.delete_session(session_id)
+                # Clear keys before dropping the session (mirrors delete_session).
+                self._sessions[session_id]["openai_key"] = None
+                self._sessions[session_id]["anthropic_key"] = None
+                del self._sessions[session_id]
 
     def get_all_jobs(self) -> Dict[str, Dict[str, Any]]:
         """Get all jobs (for debugging)."""

@@ -119,7 +119,10 @@ class ComicGenerator:
 
             # Stage 3: Break down chapters into panels
             self._update_progress(35, "Breaking chapters into panels...")
-            panel_breakdown = PanelBreakdown()
+            # Pass the user's key explicitly — the hosted backend has no
+            # ANTHROPIC_API_KEY in its environment, so PanelBreakdown() with no
+            # argument would raise "ANTHROPIC_API_KEY not found".
+            panel_breakdown = PanelBreakdown(api_key=self.anthropic_key)
 
             # Process specified chapters
             chapters_to_process = project_spec['chapters']

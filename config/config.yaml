@@ -47,7 +47,8 @@ bubbles:
 
 # Story analysis settings
 analysis:
-  llm_model: "claude-3-opus-20240229"
+  llm_model: "claude-opus-4-8"      # Claude model for analysis + panel breakdown
+  max_output_tokens: 8192           # Cap on Claude's JSON output (avoid truncation)
   max_chapters: 50                  # Maximum chapters to process
   auto_chapter: true                # Auto-detect chapter breaks
 

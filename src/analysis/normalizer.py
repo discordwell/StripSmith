@@ -119,15 +119,22 @@ class StoryNormalizer:
         return text
 
     def _normalize_quotes(self, text: str) -> str:
-        """Normalize various quote styles to standard double quotes."""
-        # Replace smart quotes with standard quotes
+        """Normalize various quote styles to standard ASCII quotes.
+
+        The keys use *named* Unicode escapes (the backslash-N form) rather than
+        literal curly characters on purpose. An editor -- or a previous save of
+        this file -- can silently flatten literal curly quotes to ASCII, turning
+        every replacement into a no-op so real curly quotes from word processors
+        are never normalized, which in turn makes dialogue detection miss quoted
+        speech. Named escapes keep the source pure ASCII and immune to that.
+        """
         replacements = {
-            '"': '"',
-            '"': '"',
-            ''': "'",
-            ''': "'",
-            '«': '"',
-            '»': '"',
+            "\N{LEFT DOUBLE QUOTATION MARK}": '"',
+            "\N{RIGHT DOUBLE QUOTATION MARK}": '"',
+            "\N{LEFT SINGLE QUOTATION MARK}": "'",
+            "\N{RIGHT SINGLE QUOTATION MARK}": "'",
+            "\N{LEFT-POINTING DOUBLE ANGLE QUOTATION MARK}": '"',
+            "\N{RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK}": '"',
         }
 
         for old, new in replacements.items():
