@@ -23,6 +23,7 @@ from src.compositor.layout import PageCompositor
 from src.compositor.export import ComicExporter
 from src.utils.logger import setup_logger, get_logger
 from src.utils.config import get_config
+from src.utils.pipeline import select_chapters, panel_image_name
 
 # Setup logger
 setup_logger(name="stripsmith", level="INFO", console=True)
@@ -126,23 +127,17 @@ def generate(story_file, style, output, format, chapters, analyze_only, characte
         click.echo("📋 Stage 3: Breaking chapters into panels...")
         panel_breakdown = PanelBreakdown()
 
-        # Process specified chapters
-        chapters_to_process = project_spec['chapters']
-        if chapters and chapters != 'all':
-            # Parse chapter range
-            if '-' in chapters:
-                start, end = map(int, chapters.split('-'))
-                chapters_to_process = [c for c in chapters_to_process if start <= c['number'] <= end]
-            else:
-                chapter_num = int(chapters)
-                chapters_to_process = [c for c in chapters_to_process if c['number'] == chapter_num]
+        # Process specified chapters (validates the --chapters selector)
+        chapters_to_process = select_chapters(chapters, project_spec['chapters'])
 
         all_breakdowns = []
         for chapter in chapters_to_process:
             click.echo(f"  Processing chapter {chapter['number']}...")
+            # Break down the *normalized* text the analyzer indexed, so chapter
+            # start/end paragraph indices line up with the text being sliced.
             breakdown = panel_breakdown.breakdown_chapter(
                 chapter,
-                normalized['raw_text'],
+                normalized['normalized_text'],
                 project_spec
             )
             all_breakdowns.append(breakdown)
@@ -174,20 +169,25 @@ def generate(story_file, style, output, format, chapters, analyze_only, characte
         character_prompts = template_manager.templates
         character_prompts = {name: t['base_prompt'] for name, t in character_prompts.items()}
 
+        # Project art style applied to every panel for a consistent look.
+        art_style = project_spec.get('style', {}).get('art_style')
+
         for breakdown in all_breakdowns:
             chapter_num = breakdown['chapter_number']
 
             for page in breakdown['pages']:
                 for panel in page['panels']:
                     panel_num = panel['global_panel_num']
-                    click.echo(f"  Generating panel {panel_num}...")
+                    click.echo(f"  Generating chapter {chapter_num} panel {panel_num}...")
 
-                    output_path = panels_dir / f"panel_{panel_num:03d}.png"
+                    # Chapter-scoped name: panel numbering restarts per chapter.
+                    output_path = panels_dir / panel_image_name(chapter_num, panel_num)
 
                     generator.generate_panel(
                         panel_data=panel,
                         character_prompts=character_prompts,
-                        output_path=str(output_path)
+                        output_path=str(output_path),
+                        style=art_style
                     )
 
         click.echo(f"  ✓ All panels generated!")
@@ -211,9 +211,10 @@ def generate(story_file, style, output, format, chapters, analyze_only, characte
                 page_num = page['page_number']
                 layout = page['layout']
 
-                # Get panel images for this page
+                # Get panel images for this page (chapter-scoped, matching how
+                # they were written in Stage 4).
                 panel_images = [
-                    str(panels_dir / f"panel_{p['global_panel_num']:03d}.png")
+                    str(panels_dir / panel_image_name(chapter_num, p['global_panel_num']))
                     for p in page['panels']
                 ]
 

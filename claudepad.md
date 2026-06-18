@@ -7,6 +7,40 @@ Session memory. **Session Summaries** at the top (newest first, keep 20; move th
 
 ## Session Summaries
 
+### 2026-06-18 05:16 UTC — Maintenance pass: fix multi-chapter output corruption, dropped art style, chapter/paragraph misalignment
+
+Repo's MVP + prior fixes were sound, but three latent bugs corrupted real
+(multi-chapter / styled) output. All fixed with regression tests (51 → 76):
+
+1. **Multi-chapter panel filename collisions (critical for any >1-chapter story).**
+   `global_panel_num` restarts at 1 each chapter (it's per-chapter despite the
+   name), but the CLI and `backend/api_wrapper.py` wrote/read panels as
+   `panel_{n:03d}.png` with no chapter prefix → chapter 2's panels overwrote
+   chapter 1's, and composition pulled the wrong images onto every page. New
+   `src/utils/pipeline.panel_image_name(chapter, n)` → `chapter_{c}_panel_{n:03d}.png`,
+   used at all four write/read sites. Empirically confirmed the guard fails if
+   reverted (both panels → `panel_001.png`).
+2. **Project art style dropped from every panel.** `ImageGenerator._build_panel_prompt`
+   read `panel_data.get("style", "comic book art")`, but breakdown panels carry
+   no `style` key, so every panel used generic art regardless of the user's
+   `--style`/inferred style (only character templates embedded it). Added a
+   `style` param to `generate_panel`/`_build_panel_prompt`; both front ends pass
+   `project_spec["style"]["art_style"]`.
+3. **Chapter text sliced from the wrong string.** Stage 1 indexes paragraphs of
+   the *normalized* text; Stage 3 was handed the *raw* text (CLI: `raw_text`;
+   web: original `story_text`) and sliced by those indices → wrong paragraphs.
+   Both front ends now pass the normalized text to `breakdown_chapter`.
+4. **Fragile/duplicated chapter parsing.** `map(int, chapters.split('-'))`
+   crashed on malformed input and was duplicated. Extracted
+   `src/utils/pipeline.select_chapters()` with friendly `ValueError`s.
+
+Also: fixed `Dict[str, any]` → `Dict[str, Any]` in `generator.py`, hoisted its
+local `import re`, corrected a misleading "lowercase" comment, and documented the
+per-chapter numbering in `breakdown.py`. New tests: `test_pipeline.py`,
+`test_generator_prompt.py`, `test_api_wrapper_multichapter.py` (the last is an
+end-to-end mock guard for bugs 1–3 together). Updated ARCHITECTURE.md (data-flow
+contracts + `pipeline.py`) and README testing section. `pytest` → 76 passed.
+
 ### 2026-06-17 11:24 UTC — Maintenance pass: fix broken LLM integration, deadlock, key wiring; add tests + docs
 
 Repo had a working MVP but several latent breakages. Fixed:
@@ -76,3 +110,17 @@ warnings. `reportlab` was pip-installed locally to let the export module import.
   constructed with dummy keys without making requests.
 - **Web state is in-memory** (`JobManager`) ⇒ single backend process; a restart
   drops in-flight jobs. Scaling out needs an external store.
+- **`global_panel_num` is per-chapter, not global.** It restarts at 1 for every
+  chapter (one breakdown == one chapter). Any on-disk panel artifact MUST be
+  scoped by chapter — use `src/utils/pipeline.panel_image_name(chapter, n)`.
+  Unscoped names silently overwrite earlier chapters' panels.
+- **Stages 1 and 3 must consume the SAME normalized text.** Stage 1 emits chapter
+  boundaries as paragraph indices into the normalized text; Stage 3 slices by
+  those indices, so handing it the raw story (different paragraph splits) extracts
+  the wrong spans. Both front ends pass the normalizer's annotated output.
+- **Panel art style comes from the caller, not the panel dict.** Breakdown panels
+  have no `style` key; `generate_panel(..., style=project_spec["style"]["art_style"])`
+  is what makes panels match the chosen look. Without it everything defaults to
+  generic "comic book art".
+- **Shared front-end logic lives in `src/utils/pipeline.py`** (`select_chapters`,
+  `panel_image_name`) so the CLI and web backend can't drift apart.

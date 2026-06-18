@@ -38,6 +38,18 @@ Stages 1 and 3 call Claude; stages 2 and 4 call DALL·E 3. Intermediate artifact
 (project spec, panel breakdowns, panel images, composed pages) are written under
 `data/temp/` so a run can be inspected or resumed stage-by-stage.
 
+Two data-flow contracts are load-bearing and easy to break:
+
+- **Stages 1 and 3 must see the same text.** Stage 1 records chapter boundaries
+  as paragraph indices into the *normalized* text; Stage 3 slices a chapter out
+  by those indices, so it must be handed the same normalized text (not the raw
+  story) or it extracts the wrong paragraphs.
+- **Panel image filenames are chapter-scoped.** `global_panel_num` from the
+  breakdown restarts at 1 each chapter, so Stage 4 writes (and Stage 5 reads)
+  panels via `panel_image_name(chapter, n)`; an unscoped name silently overwrites
+  earlier chapters' panels. The project's art style is also threaded into every
+  panel prompt so backgrounds match the characters' look.
+
 ### Shared infrastructure (`src/utils/`)
 
 - **`config.py`** — loads `config/config.yaml`, exposes dot-notation `get()`
@@ -45,6 +57,11 @@ Stages 1 and 3 call Claude; stages 2 and 4 call DALL·E 3. Intermediate artifact
   default Claude model (`DEFAULT_LLM_MODEL`) and output-token cap
   (`DEFAULT_LLM_MAX_TOKENS`), so the in-code fallback can't drift from the YAML.
 - **`logger.py`** — colored console logging via `colorama`, optional file log.
+- **`pipeline.py`** — small pure helpers shared by both front ends so they stay
+  in sync: `select_chapters()` interprets the `--chapters`/web selector
+  (`"all"`, `"N"`, `"N-M"`) with friendly validation, and `panel_image_name()`
+  produces chapter-scoped panel filenames (panel numbering restarts per chapter,
+  so filenames **must** include the chapter or multi-chapter panels collide).
 
 ### Model configuration
 

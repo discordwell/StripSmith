@@ -198,7 +198,11 @@ Return ONLY the JSON, no additional text."""
             if "pages" not in panel_data:
                 raise ValueError("Missing 'pages' in response")
 
-            # Assign global panel numbers
+            # Assign sequential panel numbers within this chapter. NOTE: this
+            # restarts at 1 for every chapter (one breakdown == one chapter), so
+            # despite the name it is NOT unique across a multi-chapter comic.
+            # Callers must scope panel image filenames by chapter (see
+            # src.utils.pipeline.panel_image_name) to avoid collisions.
             global_panel_num = 1
             for page in panel_data["pages"]:
                 for panel in page.get("panels", []):

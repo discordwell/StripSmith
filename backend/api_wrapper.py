@@ -17,6 +17,7 @@ from src.panels.breakdown import PanelBreakdown
 from src.compositor.layout import PageCompositor
 from src.compositor.export import ComicExporter
 from src.utils.logger import get_logger
+from src.utils.pipeline import select_chapters, panel_image_name
 
 from backend.jobs import JobManager, JobStatus
 
@@ -124,24 +125,21 @@ class ComicGenerator:
             # argument would raise "ANTHROPIC_API_KEY not found".
             panel_breakdown = PanelBreakdown(api_key=self.anthropic_key)
 
-            # Process specified chapters
-            chapters_to_process = project_spec['chapters']
-            if chapters and chapters != 'all':
-                if '-' in chapters:
-                    start, end = map(int, chapters.split('-'))
-                    chapters_to_process = [c for c in chapters_to_process if start <= c['number'] <= end]
-                else:
-                    chapter_num = int(chapters)
-                    chapters_to_process = [c for c in chapters_to_process if c['number'] == chapter_num]
+            # Process specified chapters (raises a friendly ValueError on a
+            # malformed selector, which fails the job cleanly).
+            chapters_to_process = select_chapters(chapters, project_spec['chapters'])
 
             all_breakdowns = []
             for i, chapter in enumerate(chapters_to_process):
                 progress = 35 + int((i / len(chapters_to_process)) * 10)
                 self._update_progress(progress, f"Processing chapter {chapter['number']}...")
 
+                # Break down the *normalized* text — the analyzer indexed its
+                # paragraphs (start_paragraph/end_paragraph), so the breakdown
+                # must slice the same text or chapters extract the wrong spans.
                 breakdown = panel_breakdown.breakdown_chapter(
                     chapter,
-                    story_text,
+                    normalized['text'],
                     project_spec
                 )
                 all_breakdowns.append(breakdown)
@@ -166,6 +164,9 @@ class ComicGenerator:
             character_prompts = template_manager.templates
             character_prompts = {name: t['base_prompt'] for name, t in character_prompts.items()}
 
+            # Project art style is applied to every panel for a consistent look.
+            art_style = project_spec.get('style', {}).get('art_style')
+
             panel_count = 0
             for breakdown in all_breakdowns:
                 chapter_num = breakdown['chapter_number']
@@ -178,13 +179,17 @@ class ComicGenerator:
                         progress = 50 + int((panel_count / total_panels) * 40)
                         self._update_progress(progress, f"Generating panel {panel_count}/{total_panels}...")
 
-                        output_path = panels_dir / f"panel_{panel_num:03d}.png"
+                        # Scope the filename by chapter: global_panel_num restarts
+                        # at 1 each chapter, so an unscoped name would overwrite
+                        # earlier chapters' panels in a multi-chapter comic.
+                        output_path = panels_dir / panel_image_name(chapter_num, panel_num)
 
                         await asyncio.to_thread(
                             generator.generate_panel,
                             panel_data=panel,
                             character_prompts=character_prompts,
-                            output_path=str(output_path)
+                            output_path=str(output_path),
+                            style=art_style
                         )
 
             logger.info(f"All panels generated! Total cost: ${generator.get_total_cost():.2f}")
@@ -205,9 +210,10 @@ class ComicGenerator:
                 for page in breakdown['pages']:
                     page_num = page['page_number']
 
-                    # Get panel images for this page
+                    # Get panel images for this page (same chapter-scoped names
+                    # used when the panels were generated above).
                     panel_images = [
-                        str(panels_dir / f"panel_{p['global_panel_num']:03d}.png")
+                        str(panels_dir / panel_image_name(chapter_num, p['global_panel_num']))
                         for p in page['panels']
                     ]
 

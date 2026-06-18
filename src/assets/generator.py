@@ -1,10 +1,11 @@
 """Image generation using DALL-E 3 (Stage 2 & 4)."""
 
 import os
+import re
 import time
 import requests
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from openai import OpenAI
 
 from src.utils.logger import get_logger
@@ -41,7 +42,7 @@ class ImageGenerator:
         size: str = None,
         quality: str = None,
         style: str = None
-    ) -> Dict[str, any]:
+    ) -> Dict[str, Any]:
         """
         Generate a single image using DALL-E 3.
 
@@ -103,7 +104,7 @@ class ImageGenerator:
         character_name: str,
         prompts: List[Dict[str, str]],
         output_dir: str
-    ) -> List[Dict[str, any]]:
+    ) -> List[Dict[str, Any]]:
         """
         Generate character reference sheet images.
 
@@ -155,8 +156,9 @@ class ImageGenerator:
         self,
         panel_data: Dict,
         character_prompts: Dict[str, str],
-        output_path: str
-    ) -> Dict[str, any]:
+        output_path: str,
+        style: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Generate a comic panel image.
 
@@ -164,12 +166,15 @@ class ImageGenerator:
             panel_data: Panel data from panel breakdown
             character_prompts: Dict mapping character names to base prompts
             output_path: Path to save panel image
+            style: Project art style (e.g. "noir comic"). Applied as the panel's
+                overall art direction so backgrounds match the characters. Falls
+                back to the panel's own ``style`` then a generic default.
 
         Returns:
             Generated image info
         """
         # Build panel prompt
-        prompt = self._build_panel_prompt(panel_data, character_prompts)
+        prompt = self._build_panel_prompt(panel_data, character_prompts, style)
 
         logger.info(f"Generating panel {panel_data.get('panel_num', '?')}: {panel_data.get('description', '')[:50]}...")
 
@@ -183,7 +188,8 @@ class ImageGenerator:
     def _build_panel_prompt(
         self,
         panel_data: Dict,
-        character_prompts: Dict[str, str]
+        character_prompts: Dict[str, str],
+        style: Optional[str] = None
     ) -> str:
         """Build complete prompt for a comic panel."""
 
@@ -205,8 +211,11 @@ class ImageGenerator:
         camera = panel_data.get("camera_angle", "medium-shot")
         description += f", {camera}"
 
-        # Add style
-        style = panel_data.get("style", "comic book art")
+        # Add style. Prefer the explicit project art style passed by the caller
+        # so every panel (backgrounds included) matches the comic's look; the
+        # breakdown's panel dicts carry no "style" key, so without this the whole
+        # comic would silently fall back to the generic default below.
+        style = style or panel_data.get("style") or "comic book art"
         prompt = f"{style}, {description}"
 
         # Clean up
@@ -223,7 +232,7 @@ class ImageGenerator:
 
         Replaces explicit violence, death, weapons with safer alternatives.
         """
-        # Lowercase for case-insensitive matching
+        # Matching is case-insensitive via re.IGNORECASE below; keep original case.
         sanitized = prompt
 
         # Replace problematic terms with safe alternatives
@@ -258,7 +267,6 @@ class ImageGenerator:
             r'\bbeating\b': 'fighting',
         }
 
-        import re
         for pattern, replacement in replacements.items():
             sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
 
