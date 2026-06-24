@@ -1,7 +1,7 @@
 """Story text normalization and cleaning (Stage 0)."""
 
 import re
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from pathlib import Path
 
 from src.utils.logger import get_logger
@@ -13,15 +13,30 @@ class StoryNormalizer:
     """Normalize and clean story text for processing."""
 
     def __init__(self):
-        """Initialize story normalizer."""
+        """Initialize story normalizer.
+
+        The curly/angle dialogue patterns use *named* Unicode escapes for the
+        same reason ``_normalize_quotes`` does: written as literal curly
+        characters they can be silently flattened to ASCII on save (the "Smart
+        quotes" pattern here had in fact degenerated into a duplicate of the
+        ASCII double-quote one), making them dead. In normal use these run after
+        ``_normalize_quotes`` has already converted curly/angle quotes to ASCII,
+        but keeping them correct means ``_annotate_dialogue`` still detects
+        quoted speech if it is ever handed un-normalized text.
+        """
         self.dialogue_patterns = [
-            r'"([^"]+)"',           # Double quotes
-            r"'([^']+)'",           # Single quotes
-            r'"([^"]+)"',           # Smart quotes
-            r'«([^»]+)»',           # French quotes
+            r'"([^"]+)"',           # Double quotes (ASCII)
+            r"'([^']+)'",           # Single quotes (ASCII)
+            # Smart double quotes “...”
+            "\N{LEFT DOUBLE QUOTATION MARK}([^\N{RIGHT DOUBLE QUOTATION MARK}]+)"
+            "\N{RIGHT DOUBLE QUOTATION MARK}",
+            # French angle quotes «...»
+            "\N{LEFT-POINTING DOUBLE ANGLE QUOTATION MARK}"
+            "([^\N{RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK}]+)"
+            "\N{RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK}",
         ]
 
-    def normalize_file(self, file_path: str) -> Dict[str, any]:
+    def normalize_file(self, file_path: str) -> Dict[str, Any]:
         """
         Load and normalize a story file.
 
@@ -53,7 +68,7 @@ class StoryNormalizer:
             logger.error(f"Error loading file: {e}")
             raise
 
-    def normalize(self, text: str) -> Dict[str, any]:
+    def normalize(self, text: str) -> Dict[str, Any]:
         """
         Normalize story text.
 
@@ -152,7 +167,7 @@ class StoryNormalizer:
 
         return paragraphs
 
-    def _detect_structure(self, paragraphs: List[str]) -> Dict[str, any]:
+    def _detect_structure(self, paragraphs: List[str]) -> Dict[str, Any]:
         """
         Detect chapter breaks, scene breaks, etc.
 
@@ -214,7 +229,7 @@ class StoryNormalizer:
 
         return annotated
 
-    def _extract_metadata(self, text: str, structure: Dict) -> Dict[str, any]:
+    def _extract_metadata(self, text: str, structure: Dict) -> Dict[str, Any]:
         """Extract metadata from the story."""
         return {
             "word_count": len(text.split()),

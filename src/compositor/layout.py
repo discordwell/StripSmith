@@ -1,5 +1,6 @@
 """Page layout and panel composition (Stage 5)."""
 
+import math
 import os
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -78,6 +79,14 @@ class PageCompositor:
         logger.info(f"Page saved: {output_path}")
         return output_path
 
+    # How many columns each named layout's grid uses. Rows are derived from the
+    # panel count, so the page always grows enough rows to hold *every* panel.
+    _LAYOUT_COLUMNS = {
+        "3-panel-grid": 1,   # full-width horizontal strips, stacked vertically
+        "webtoon": 1,        # vertical scroll: full-width strips, stacked
+        "4-panel-grid": 2,   # two columns
+    }
+
     def _calculate_panel_positions(
         self,
         layout: str,
@@ -86,68 +95,72 @@ class PageCompositor:
         """
         Calculate panel positions for layout.
 
+        Always returns exactly ``panel_count`` (x, y, width, height) rectangles
+        so the compositor never drops a panel. ``compose_page`` ``zip``s the
+        panel images against these positions, so if this returned fewer
+        rectangles than there are panels, the surplus panels -- already
+        generated and *paid for* in Stage 4 -- would vanish from the page with
+        no warning. Instead the grid grows extra rows to fit whatever the
+        breakdown placed on the page.
+
         Returns:
-            List of (x, y, width, height) tuples
+            List of (x, y, width, height) tuples, one per panel.
         """
-        positions = []
+        if panel_count <= 0:
+            return []
+
+        # Splash = a single full-bleed panel. Only meaningful for one panel; if
+        # a breakdown ever marks a multi-panel page "splash", fall through to a
+        # near-square grid so the extra panels are kept rather than discarded.
+        if layout == "splash" and panel_count == 1:
+            return [(
+                self.margin,
+                self.margin,
+                self.page_width - (2 * self.margin),
+                self.page_height - (2 * self.margin),
+            )]
+
+        if layout in self._LAYOUT_COLUMNS:
+            cols = self._LAYOUT_COLUMNS[layout]
+        elif layout == "splash":
+            # Multi-panel "splash": keep panels as large as possible.
+            cols = math.ceil(math.sqrt(panel_count))
+        else:
+            logger.warning(f"Unknown layout: {layout}, using stacked rows")
+            cols = 1
+
+        return self._grid_positions(cols, panel_count)
+
+    def _grid_positions(
+        self,
+        cols: int,
+        panel_count: int
+    ) -> List[Tuple[int, int, int, int]]:
+        """Lay out ``panel_count`` cells row-major in a grid ``cols`` wide.
+
+        The row count is derived from ``panel_count`` so every panel gets a
+        cell. Cells are gutter-separated and stay within the page margins.
+        """
+        cols = max(1, cols)
+        rows = math.ceil(panel_count / cols)
 
         usable_width = self.page_width - (2 * self.margin)
         usable_height = self.page_height - (2 * self.margin)
 
-        if layout == "3-panel-grid":
-            # 3 equal rows
-            panel_height = (usable_height - (2 * self.gutter)) // 3
+        # Clamp to a positive size: with an absurd number of panels on one page
+        # the floor division can reach 0 (or go negative once gutters dominate),
+        # which would make PIL raise in _resize_panel/_draw_panel_borders and
+        # abort the whole page (and the job). A degenerate-but-valid rect keeps
+        # composition total — no realistic breakdown reaches this regime.
+        cell_width = max(1, (usable_width - (cols - 1) * self.gutter) // cols)
+        cell_height = max(1, (usable_height - (rows - 1) * self.gutter) // rows)
 
-            for i in range(min(3, panel_count)):
-                y = self.margin + (i * (panel_height + self.gutter))
-                positions.append((
-                    self.margin,
-                    y,
-                    usable_width,
-                    panel_height
-                ))
-
-        elif layout == "4-panel-grid":
-            # 2x2 grid
-            panel_width = (usable_width - self.gutter) // 2
-            panel_height = (usable_height - self.gutter) // 2
-
-            for row in range(2):
-                for col in range(2):
-                    if len(positions) >= panel_count:
-                        break
-
-                    x = self.margin + (col * (panel_width + self.gutter))
-                    y = self.margin + (row * (panel_height + self.gutter))
-
-                    positions.append((x, y, panel_width, panel_height))
-
-        elif layout == "splash":
-            # Full page
-            positions.append((
-                self.margin,
-                self.margin,
-                usable_width,
-                usable_height
-            ))
-
-        elif layout == "webtoon":
-            # Vertical stack
-            panel_height = usable_height // min(panel_count, 6)
-
-            for i in range(min(6, panel_count)):
-                y = self.margin + (i * panel_height)
-                positions.append((
-                    self.margin,
-                    y,
-                    usable_width,
-                    panel_height
-                ))
-
-        else:
-            # Default: 3-panel grid
-            logger.warning(f"Unknown layout: {layout}, using 3-panel-grid")
-            return self._calculate_panel_positions("3-panel-grid", panel_count)
+        positions = []
+        for index in range(panel_count):
+            row, col = divmod(index, cols)
+            x = self.margin + col * (cell_width + self.gutter)
+            y = self.margin + row * (cell_height + self.gutter)
+            positions.append((x, y, cell_width, cell_height))
 
         return positions
 

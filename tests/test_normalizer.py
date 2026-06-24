@@ -43,6 +43,36 @@ def test_dialogue_detected_after_curly_quote_normalization():
     assert any("[DIALOGUE]" in p or "[MIXED]" in p for p in paras), paras
 
 
+def test_french_quote_dialogue_detected():
+    n = StoryNormalizer()
+    result = n.normalize(f"Le détective dit, {LAQUO}Nous devons parler.{RAQUO}")
+    paras = result["paragraphs"]
+    assert any("[DIALOGUE]" in p or "[MIXED]" in p for p in paras), paras
+
+
+def test_curly_and_angle_dialogue_patterns_are_live():
+    """The smart-double and French-angle dialogue patterns must actually match
+    their quote characters -- the smart-quote pattern had previously been
+    flattened to ASCII, making it a dead duplicate of the ASCII pattern. Match
+    against UN-normalized text so this guards the patterns directly, not the
+    quote normalization that runs ahead of them in normalize().
+    """
+    import re
+
+    n = StoryNormalizer()
+    smart = f"{LDQUO}hello{RDQUO}"
+    french = f"{LAQUO}bonjour{RAQUO}"
+
+    matches_smart = [bool(re.search(p, smart)) for p in n.dialogue_patterns]
+    matches_french = [bool(re.search(p, french)) for p in n.dialogue_patterns]
+
+    # The ASCII double-quote pattern (index 0) must NOT be what catches a smart
+    # quote -- if it does, the dedicated smart-quote pattern has degenerated.
+    assert not matches_smart[0]
+    assert any(matches_smart), "no pattern matches smart double quotes"
+    assert any(matches_french), "no pattern matches French angle quotes"
+
+
 def test_pure_narration_is_annotated():
     n = StoryNormalizer()
     result = n.normalize("The rain fell on the empty street.")

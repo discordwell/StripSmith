@@ -38,7 +38,7 @@ Stages 1 and 3 call Claude; stages 2 and 4 call DALL·E 3. Intermediate artifact
 (project spec, panel breakdowns, panel images, composed pages) are written under
 `data/temp/` so a run can be inspected or resumed stage-by-stage.
 
-Two data-flow contracts are load-bearing and easy to break:
+Three data-flow contracts are load-bearing and easy to break:
 
 - **Stages 1 and 3 must see the same text.** Stage 1 records chapter boundaries
   as paragraph indices into the *normalized* text; Stage 3 slices a chapter out
@@ -49,6 +49,13 @@ Two data-flow contracts are load-bearing and easy to break:
   panels via `panel_image_name(chapter, n)`; an unscoped name silently overwrites
   earlier chapters' panels. The project's art style is also threaded into every
   panel prompt so backgrounds match the characters' look.
+- **Page layout must hold every panel on the page.** Stage 4 generates (and
+  pays for) one image per panel the breakdown placed on a page, and Stage 5's
+  `compose_page` `zip`s those images against the rectangles from
+  `_calculate_panel_positions`. That function therefore returns exactly one
+  rectangle per panel for *every* layout — the grid grows extra rows past a
+  template's nominal capacity (3/4/1/6) rather than capping, because a capped
+  list would make `zip` silently drop the surplus panels off the page.
 
 ### Shared infrastructure (`src/utils/`)
 

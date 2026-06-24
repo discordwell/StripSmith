@@ -7,6 +7,49 @@ Session memory. **Session Summaries** at the top (newest first, keep 20; move th
 
 ## Session Summaries
 
+### 2026-06-24 — Maintenance pass: fix silent panel dropping in page composition + normalizer correctness cleanups
+
+Found one real output-loss bug (same family as prior passes) plus two latent
+correctness issues. All fixed with tests (76 → 99 passing).
+
+1. **Silent panel dropping at composition (Stage 5) — content loss + wasted spend.**
+   `PageCompositor._calculate_panel_positions` capped the rectangles it returned
+   at each template's nominal capacity (3-panel-grid→3, 4-panel-grid→4, splash→1,
+   webtoon→6). `compose_page` then `zip`s the page's panel *images* against those
+   rectangles, so any page the breakdown gave more panels than the cap lost the
+   surplus — panels that Stage 4 had already generated and **paid DALL·E for** —
+   with no warning. Empirically confirmed (e.g. splash@4 → 1 position → 3 dropped;
+   3-panel-grid@5 → 3 → 2 dropped). Rewrote the method to always emit exactly one
+   rectangle per panel via a generic `_grid_positions(cols, panel_count)` helper:
+   each layout maps to a column count (3-panel-grid/webtoon→1, 4-panel-grid→2,
+   multi-panel splash→near-square) and the grid grows however many rows are needed.
+   Canonical counts (3-grid@3, 4-grid@4, splash@1) are byte-identical to before;
+   unknown layouts still match 3-panel-grid output. This also removed the old
+   `4-panel-grid` inner-`break`-only quirk. New/updated tests in `test_layout.py`:
+   parametrized no-drop guard over every layout × {1,2,5,7,12}, a `compose_page`
+   end-to-end guard (5 colored panels on a 3-grid → all 5 sampled on the page),
+   bounds checks over over-capacity counts, and a zero-panel case. Removed the two
+   old tests that *asserted the capping* (they encoded the bug). Documented the
+   new "page layout must hold every panel" data-flow contract in ARCHITECTURE.md.
+
+2. **`Dict[str, any]` (lowercase builtin) in `normalizer.py` ×4.** Was the
+   builtin `any`, not `typing.Any` — wrong as a type, works only because
+   annotations aren't enforced. Imported `Any`, replaced all four. (`generator.py`
+   had the same bug fixed in a prior pass; normalizer was missed.)
+
+3. **Flattened/dead dialogue pattern in `normalizer.py`.** The "Smart quotes"
+   entry in `dialogue_patterns` had been silently flattened to ASCII — a literal
+   duplicate of the ASCII double-quote pattern (confirmed via hexdump), exactly
+   the fragility the file already warns about for `_normalize_quotes`. Rewrote the
+   smart-double and French-angle patterns with *named* Unicode escapes (the repo's
+   established flatten-proof convention). They normally run after
+   `_normalize_quotes` has already ASCII-folded those quotes, but are now correct
+   if `_annotate_dialogue` ever sees un-normalized text. New tests: French-quote
+   dialogue detection + a direct guard that the smart pattern matches smart quotes
+   while the ASCII pattern does NOT (so the duplicate can't silently return).
+
+`pytest` → 99 passed, 0 failures. All offline (no API keys/network).
+
 ### 2026-06-18 05:16 UTC — Maintenance pass: fix multi-chapter output corruption, dropped art style, chapter/paragraph misalignment
 
 Repo's MVP + prior fixes were sound, but three latent bugs corrupted real
@@ -124,3 +167,13 @@ warnings. `reportlab` was pip-installed locally to let the export module import.
   generic "comic book art".
 - **Shared front-end logic lives in `src/utils/pipeline.py`** (`select_chapters`,
   `panel_image_name`) so the CLI and web backend can't drift apart.
+- **Page layout must emit one rectangle per panel.** `compose_page` `zip`s the
+  page's panel images against `_calculate_panel_positions(...)`, so that function
+  must never return fewer rectangles than there are panels or `zip` silently
+  drops the surplus (already-generated, paid-for) panels off the page. It grows
+  extra grid rows past a template's nominal capacity instead of capping.
+- **Quote-bearing regex literals are fragile everywhere, not just
+  `_normalize_quotes`.** `normalizer.py`'s `dialogue_patterns` had a smart-quote
+  pattern flatten into an ASCII duplicate. Any curly/angle quote written as a
+  literal char can be flattened on save — use `\N{...}` named escapes (note:
+  those need *non-raw* strings).
