@@ -119,7 +119,8 @@ class ImageGenerator:
         logger.info(f"Generating character sheet for {character_name}...")
 
         # Create output directory
-        char_dir = Path(output_dir) / self._sanitize_filename(character_name)
+        safe_name = self._sanitize_filename(character_name)
+        char_dir = Path(output_dir) / safe_name
         char_dir.mkdir(parents=True, exist_ok=True)
 
         generated = []
@@ -128,8 +129,13 @@ class ImageGenerator:
             angle = prompt_data["angle"]
             prompt = prompt_data["prompt"]
 
-            # Generate filename
-            filename = f"{character_name}_{angle}.png"
+            # Build a flat, separator-free filename. Both parts must be
+            # sanitized: the default angle "3/4" would otherwise make this
+            # "{name}_3/4.png", which the filesystem reads as a nested
+            # "{name}_3/" directory holding "4.png" (see _sanitize_filename),
+            # scattering the reference sheet. The name is sanitized too so the
+            # filename matches its (already-sanitized) directory.
+            filename = f"{safe_name}_{self._sanitize_filename(angle)}.png"
             output_path = str(char_dir / filename)
 
             try:
@@ -307,11 +313,27 @@ class ImageGenerator:
         return costs.get(size, {}).get(quality, 0.040)
 
     def _sanitize_filename(self, name: str) -> str:
-        """Sanitize character name for filename."""
-        # Remove special characters
-        name = "".join(c for c in name if c.isalnum() or c in (' ', '-', '_'))
-        name = name.replace(' ', '_')
-        return name
+        """Sanitize a string into one safe path component.
+
+        Disallowed characters are mapped to ``-`` (whitespace to ``_``) rather
+        than dropped. That distinction matters for values like the default
+        ``"3/4"`` camera angle: dropping the slash *or* leaving it both look
+        harmless until ``f"{name}_{angle}.png"`` becomes ``"Sarah_3/4.png"``,
+        which the filesystem reads as a nested ``Sarah_3/`` directory holding
+        ``4.png`` instead of one flat file. Mapping the slash to ``-`` keeps the
+        result a single separator-free component. Unicode letters and digits
+        (e.g. accented names) are preserved, since ``str.isalnum`` is
+        Unicode-aware.
+        """
+        cleaned = "".join(
+            c if (c.isalnum() or c in ("-", "_"))
+            else ("_" if c.isspace() else "-")
+            for c in name
+        )
+        # Collapse runs of separators and trim leading/trailing ones so we never
+        # emit "" (which would write straight into the parent directory).
+        cleaned = re.sub(r"[-_]{2,}", "_", cleaned).strip("-_")
+        return cleaned or "unnamed"
 
     def get_total_cost(self) -> float:
         """Get total cost of all generations."""

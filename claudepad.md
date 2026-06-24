@@ -7,6 +7,47 @@ Session memory. **Session Summaries** at the top (newest first, keep 20; move th
 
 ## Session Summaries
 
+### 2026-06-24 — Maintenance pass: fix character-sheet filename scattering + broken web PNG download; lifespan modernization
+
+Two real user-reachable bugs (both confirmed empirically, both same "silent
+corruption / broken happy-path" family as prior passes) plus a defensive fix and
+a deprecation cleanup. Tests 103 → 111, all offline.
+
+1. **Character-sheet reference images scattered into a stray subdirectory
+   (every run).** `ImageGenerator.generate_character_sheet` built per-angle
+   filenames as `f"{character_name}_{angle}.png"`, and the *default* angle set
+   includes `"3/4"`. So the file became `"Sarah_3/4.png"`, which the filesystem
+   reads as a nested `Sarah_3/` directory holding `4.png` — the 3/4 view lands
+   in a surprise subfolder on every character. The name was also used raw while
+   its directory was `_sanitize_filename`d, so they could disagree. Rewrote
+   `_sanitize_filename` to *map* path-unsafe chars to `-` (whitespace→`_`)
+   instead of dropping them, collapse separator runs, and never return `""`
+   (→ `"unnamed"`); Unicode letters/digits are preserved. The call site now
+   sanitizes both the (reused) name and the angle. Empirically: `3/4` → `3-4`,
+   one flat file per angle in the character dir.
+2. **Web PNG download was broken.** The frontend offers a "PNG Images" format;
+   `api_wrapper` writes it as a *directory* of page PNGs, but `download_result`
+   served it via `FileResponse(directory)`, which raises at send time (it can
+   only stream a regular file). So every PNG download 500'd. `download_result`
+   now zips a directory output into a single `.zip` (`pages.zip`) before
+   serving; PDF/CBZ single-file outputs pass through unchanged.
+3. **`process_comic_generation` dereferenced `job["session_id"]` before its
+   None-check.** A missing job → TypeError (caught, recorded as a confusing
+   FAILED status). Reordered so `if not job: return` runs first.
+4. **`@app.on_event("startup")` → `lifespan` context manager.** The hook is
+   deprecated (FastAPI); the lifespan version also cancels the cleanup loop
+   cleanly on shutdown. (Surfaced as a warning once a test imported `main`.)
+
+New tests: `test_generator_filenames.py` (sanitization edge cases + an
+end-to-end `generate_character_sheet` guard asserting flat per-angle files) and
+`test_download.py` (PNG→zip, single-file passthrough, 404, and a spy-based guard
+that a missing job is a clean no-op). All 5 bug-targeting guards were confirmed
+to FAIL against the pre-fix source via `git stash`. A review subagent found no
+blocking issues; applied its one test-quality note (unique job_ids so the shared
+`main.job_manager` singleton can't couple tests). Updated ARCHITECTURE.md (4th
+data-flow contract + download/lifespan notes) and the README testing section.
+`pytest` → 111 passed.
+
 ### 2026-06-24 — Maintenance pass: fix silent panel dropping in page composition + normalizer correctness cleanups
 
 Found one real output-loss bug (same family as prior passes) plus two latent
@@ -177,3 +218,19 @@ warnings. `reportlab` was pip-installed locally to let the export module import.
   pattern flatten into an ASCII duplicate. Any curly/angle quote written as a
   literal char can be flattened on save — use `\N{...}` named escapes (note:
   those need *non-raw* strings).
+- **Filenames built from data must be sanitized for path separators.** The
+  default character-sheet angle `"3/4"` made `generate_character_sheet` write
+  `"{name}_3/4.png"`, i.e. a nested `{name}_3/` dir holding `4.png`.
+  `ImageGenerator._sanitize_filename` now *maps* unsafe chars to `-` (not drop),
+  collapses separator runs, and never returns `""`. Sanitize BOTH the name and
+  the angle, and keep the directory name and filename's name-part consistent.
+- **Web output that is a directory must be zipped before download.** The `png`
+  format writes a folder of page images; `FileResponse` can only serve a regular
+  file (it raises on a directory), and the frontend download link expects one
+  file. `download_result` zips any directory output into a `.zip`; PDF/CBZ are
+  already single files. (PDF/CBZ vs PNG is the only format that yields a dir.)
+- **`backend/main.py` uses a `lifespan` handler, not `@app.on_event`.** The old
+  hook is deprecated; `app = FastAPI(..., lifespan=lifespan)` runs the cleanup
+  loop and cancels it on shutdown. `cleanup_old_jobs`/`job_manager`/`lifespan`
+  are defined *before* `app`. Tests build `TestClient(main.app)` WITHOUT the
+  context-manager form so the cleanup loop never spawns.

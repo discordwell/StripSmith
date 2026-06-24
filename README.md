@@ -276,9 +276,11 @@ pytest tests/test_normalizer.py   # run a single module
 The suite covers story normalization (including smart-quote handling),
 configuration loading, character templating, page-layout geometry, the in-memory
 job/session manager, chapter selection, panel-prompt art-style threading,
-chapter-scoped panel filenames (so multi-chapter comics don't collide), and the
-web pipeline's API-key wiring. It runs fully offline — no API keys or network
-access required.
+chapter-scoped panel filenames (so multi-chapter comics don't collide),
+character-sheet filename sanitization (so the `3/4` angle isn't scattered into a
+stray subdirectory), the web download endpoint (PNG page folders are packaged
+into a single zip), and the web pipeline's API-key wiring. It runs fully
+offline — no API keys or network access required.
 
 ---
 

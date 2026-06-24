@@ -38,7 +38,7 @@ Stages 1 and 3 call Claude; stages 2 and 4 call DALL·E 3. Intermediate artifact
 (project spec, panel breakdowns, panel images, composed pages) are written under
 `data/temp/` so a run can be inspected or resumed stage-by-stage.
 
-Three data-flow contracts are load-bearing and easy to break:
+Four data-flow contracts are load-bearing and easy to break:
 
 - **Stages 1 and 3 must see the same text.** Stage 1 records chapter boundaries
   as paragraph indices into the *normalized* text; Stage 3 slices a chapter out
@@ -56,6 +56,13 @@ Three data-flow contracts are load-bearing and easy to break:
   rectangle per panel for *every* layout — the grid grows extra rows past a
   template's nominal capacity (3/4/1/6) rather than capping, because a capped
   list would make `zip` silently drop the surplus panels off the page.
+- **Character-sheet filenames must stay flat.** Stage 2 writes one reference
+  image per character per angle into the character's directory. The default
+  angles include `3/4`, whose slash would turn `{name}_{angle}.png` into a
+  nested `{name}_3/` directory holding `4.png`, scattering the sheet. Names and
+  angles are run through `ImageGenerator._sanitize_filename`, which maps
+  path-unsafe characters to `-` (never dropping them, never emitting an empty
+  name) so each part stays a single, separator-free component.
 
 ### Shared infrastructure (`src/utils/`)
 
@@ -90,7 +97,11 @@ connectivity. Keys come from `.env` (loaded via `python-dotenv`).
 
 - **`main.py`** — HTTP API: create session, store keys, start generation
   (background task), poll status, download result, cancel. CORS-enabled for the
-  Vercel frontend. A startup task periodically prunes old jobs/sessions.
+  Vercel frontend. A `lifespan` task periodically prunes old jobs/sessions
+  (cancelled cleanly on shutdown). The download endpoint packages **directory**
+  outputs into a single `.zip` before serving: the `png` format writes a folder
+  of page images, and `FileResponse` can only stream a regular file (it raises
+  on a directory), so a naïve hand-off broke every PNG download.
 - **`api_wrapper.py`** (`ComicGenerator`) — async wrapper that runs the `src/`
   pipeline with the **user's** API keys (never the server's), reporting progress
   to the `JobManager` and offloading blocking SDK calls via `asyncio.to_thread`.

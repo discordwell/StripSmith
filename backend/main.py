@@ -4,6 +4,8 @@ import os
 import sys
 import uuid
 import asyncio
+import zipfile
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -20,8 +22,33 @@ sys.path.insert(0, str(project_root))
 from backend.jobs import JobManager, JobStatus
 from backend.api_wrapper import ComicGenerator
 
+# Job manager instance (in-memory sessions + jobs)
+job_manager = JobManager()
+
+
+async def cleanup_old_jobs():
+    """Remove jobs/sessions older than 2 hours, on a 10-minute loop."""
+    while True:
+        await asyncio.sleep(600)  # Every 10 minutes
+        job_manager.cleanup_old_jobs(max_age_hours=2)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Run the periodic cleanup loop for the app's lifetime.
+
+    Modern replacement for the deprecated ``@app.on_event("startup")`` hook;
+    also cancels the loop cleanly on shutdown instead of leaking the task.
+    """
+    cleanup_task = asyncio.create_task(cleanup_old_jobs())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+
+
 # Initialize FastAPI app
-app = FastAPI(title="StripSmith API", version="1.0.0")
+app = FastAPI(title="StripSmith API", version="1.0.0", lifespan=lifespan)
 
 # CORS configuration - allow Vercel frontend
 app.add_middleware(
@@ -36,22 +63,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Job manager instance
-job_manager = JobManager()
-
-# Cleanup old jobs periodically
-@app.on_event("startup")
-async def startup_event():
-    """Clean up old jobs on startup."""
-    asyncio.create_task(cleanup_old_jobs())
-
-
-async def cleanup_old_jobs():
-    """Remove jobs older than 2 hours."""
-    while True:
-        await asyncio.sleep(600)  # Every 10 minutes
-        job_manager.cleanup_old_jobs(max_age_hours=2)
 
 
 # Models
@@ -198,11 +209,15 @@ async def generate_comic(
 async def process_comic_generation(job_id: str):
     """Background task to process comic generation."""
     try:
-        # Get job and session
+        # Get the job, then its session. Check the job exists before indexing
+        # it — a missing job (e.g. already cleaned up) would otherwise raise a
+        # confusing TypeError on job["session_id"] before the guard below ran.
         job = job_manager.get_job(job_id)
-        session = job_manager.get_session(job["session_id"])
+        if not job:
+            return
 
-        if not job or not session:
+        session = job_manager.get_session(job["session_id"])
+        if not session:
             return
 
         # Update status
@@ -300,10 +315,26 @@ async def download_result(job_id: str):
     if not output_path or not Path(output_path).exists():
         raise HTTPException(status_code=404, detail="Output file not found")
 
+    download_path = Path(output_path)
+
+    # PNG output is a *directory* of page images, but FileResponse can only
+    # serve a regular file (it raises at send time on a directory), and the
+    # frontend download link expects a single file. Package the pages into one
+    # .zip for delivery. PDF/CBZ outputs are already single files and pass
+    # straight through.
+    if download_path.is_dir():
+        zip_path = download_path.with_suffix(".zip")
+        if not zip_path.exists():
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for page in sorted(download_path.iterdir()):
+                    if page.is_file():
+                        zf.write(page, page.name)
+        download_path = zip_path
+
     return FileResponse(
-        output_path,
+        str(download_path),
         media_type="application/octet-stream",
-        filename=Path(output_path).name
+        filename=download_path.name
     )
 
 
